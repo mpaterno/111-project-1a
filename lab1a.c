@@ -14,6 +14,7 @@ struct termios newTermState;
 int shellFlag;
 int pipeToChild[2];
 int pipeToParent[2];
+char *shellProgram = NULL;
 pid_t pid;
 extern int errno;
 
@@ -30,14 +31,18 @@ void noShell_IO()
       {
         write(STDOUT_FILENO, '\r', sizeof(char));
         write(STDOUT_FILENO, '\n', sizeof(char));
+        printf('Line 33\n');
       }
       else if (buffer[i] == '\4')
       {
         exit(0);
-        printf("Figuring Out.");
+        printf('Line 38\n');
       }
       else
+      {
         write(STDOUT_FILENO, buffer[i], sizeof(char));
+        printf('Line 42\n');
+      }
       i++;
     }
     // May not need memset
@@ -50,11 +55,13 @@ void initializePipes(int fd1[2], int fd2[2])
   if (pipe(fd1) == -1)
   {
     fprintf(stderr, "Pipe creation error.");
+    printf('Line 56\n');
     exit(1);
   }
   if (pipe(fd2) == -1)
   {
     fprintf(stderr, "Pipe creation error.");
+    printf('Line 62\n');
     exit(1);
   }
 }
@@ -76,6 +83,7 @@ void shell_IO(int fd1, int fd2)
   if (pollReturn < 0)
   {
     fprintf(stderr, "Return Error\n");
+    printf('Line 84\n');
     exit(1);
   }
   if ((pollfds[0].revents & POLLIN))
@@ -116,9 +124,6 @@ void shell_IO(int fd1, int fd2)
 
 void shellProcess()
 {
-  //close pipes we dont need right now
-  close(pipeToChild[1]);
-  close(pipeToParent[0]);
   //copy fd's we need to 0 and 1
   dup2(pipeToChild[0], 0);
   dup2(pipeToParent[1], 1);
@@ -128,7 +133,7 @@ void shellProcess()
 
   char path[] = "/bin/bash";
   char *args[2] = {path, NULL};
-  if (execvp(path, args) == -1)
+  if (execvp(shellProgram, args) == -1)
   { //execute shell
     fprintf(stderr, "error: %s", strerror(errno));
     exit(1);
@@ -175,7 +180,7 @@ int main(int argc, char **argv)
 
   static struct option long_options[] =
       {
-          {"shell", no_argument, 0, 's'},
+          {"shell", required_argument, 0, 's'},
       };
   int c;
 
@@ -188,7 +193,13 @@ int main(int argc, char **argv)
     if (c == -1)
       break;
     else if (c == 's')
+    {
       shellFlag = 1;
+      if (optarg != NULL)
+      {
+        shellProgram = optarg;
+      }
+    }
     else
       exit(99);
   }
