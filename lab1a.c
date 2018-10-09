@@ -12,8 +12,8 @@
 struct termios defaultTermState;
 struct termios newTermState;
 int shellFlag;
-int fd1_global[2];
-int fd2_global[2];
+int pipeToChild[2];
+int pipeToParent[2];
 pid_t pid;
 extern int errno;
 
@@ -30,6 +30,11 @@ void noShell_IO()
       {
         write(STDOUT_FILENO, '\r', sizeof(char));
         write(STDOUT_FILENO, '\n', sizeof(char));
+      }
+      else if (buffer[i] == '\4')
+      {
+        exit(0);
+        printf("Figuring Out.");
       }
       else
         write(STDOUT_FILENO, buffer[i], sizeof(char));
@@ -59,7 +64,7 @@ void shell_IO(int fd1, int fd2)
   // poll_IO describing stdin
   struct pollfd pollfds[2];
   pollfds[0].fd = fd1;
-  pollfds[1].fd = fd2_global[0];
+  pollfds[1].fd = pipeToParent[0];
   // Both pollfds waiting for either input (POLLIN) or error (POLLHUP, POLLERR) events.
   pollfds[0].events = POLLIN | POLLHUP | POLLERR;
   pollfds[1].events = POLLIN | POLLHUP | POLLERR;
@@ -73,7 +78,7 @@ void shell_IO(int fd1, int fd2)
     fprintf(stderr, "Return Error\n");
     exit(1);
   }
-  if ((pollfds[0].revents /*POLLIN*/))
+  if ((pollfds[0].revents & POLLIN))
   {
     int readSize = read(fd1, buffer, sizeof(char) * 256);
     while (readSize)
@@ -85,16 +90,16 @@ void shell_IO(int fd1, int fd2)
         {
           write(fd2, '\r', sizeof(char));
           write(fd2, '\n', sizeof(char));
-          write(fd1_global[1], '\n', sizeof(char));
+          write(pipeToChild[1], '\n', sizeof(char));
         }
         else if (buffer[i] == '\4')
-          close(fd1_global[1]);
+          close(pipeToChild[1]);
         else if (buffer[i] == '\3')
           kill(pid, SIGINT);
         else
         {
-          write(fd2, &buffer[i], sizeof(char));
-          write(fd1_global[1], buffer, sizeof(char));
+          write(fd2, buffer[i], sizeof(char));
+          write(pipeToChild[1], buffer, sizeof(char));
         }
         i++;
       }
@@ -109,17 +114,17 @@ void shell_IO(int fd1, int fd2)
   }
 }
 
-void childShell()
+void shellProcess()
 {
   //close pipes we dont need right now
-  close(fd1_global[1]);
-  close(fd2_global[0]);
+  close(pipeToChild[1]);
+  close(pipeToParent[0]);
   //copy fd's we need to 0 and 1
-  dup2(fd1_global[0], 0);
-  dup2(fd2_global[1], 1);
+  dup2(pipeToChild[0], 0);
+  dup2(pipeToParent[1], 1);
   //close original versions
-  close(fd1_global[0]);
-  close(fd2_global[1]);
+  close(pipeToChild[0]);
+  close(pipeToParent[1]);
 
   char path[] = "/bin/bash";
   char *args[2] = {path, NULL};
@@ -168,18 +173,17 @@ int main(int argc, char **argv)
 
   shellFlag = 0;
 
+  static struct option long_options[] =
+      {
+          {"shell", no_argument, 0, 's'},
+      };
+  int c;
+
   // Set Options
   while (1)
   {
-
-    static struct option long_options[] =
-        {
-            {"shell", no_argument, 0, 's'},
-        };
-    int c;
     // int option_index = 0;
     c = getopt_long(argc, argv, "s", long_options, NULL);
-
     /* Detect end of options */
     if (c == -1)
       break;
@@ -188,23 +192,23 @@ int main(int argc, char **argv)
     else
       exit(99);
   }
-  initializePipes(fd1_global, fd2_global);
+  initializePipes(pipeToChild, pipeToParent);
 
   if (shellFlag)
   {
     pid = fork(); // Create new process and store ID.
     if (pid == 0)
-      childShell();
+      shellProcess();
     else if (pid > 0)
     {
-      close(fd1_global[0]);
-      close(fd2_global[1]);
+      close(pipeToChild[0]);
+      close(pipeToParent[1]);
       shell_IO(0, 1);
     }
     else
     {
-      // fprintf(stderr, "error: %s", strerror(errno));
-      // exit(1);
+      fprintf(stderr, "error: %s", strerror(errno));
+      exit(1);
     }
   }
   noShell_IO();
