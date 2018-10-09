@@ -3,8 +3,11 @@
 #include <stdlib.h>
 #include <termios.h>
 #include <getopt.h>
-#include <pthread.h>
 #include <poll.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <signal.h>
 
 struct termios defaultTermState;
 struct termios newTermState;
@@ -12,6 +15,7 @@ int shellFlag;
 int fd1_global[2];
 int fd2_global[2];
 pid_t pid;
+extern int errno;
 
 void noShell_IO()
 {
@@ -23,7 +27,10 @@ void noShell_IO()
     while (i < readSize)
     {
       if (buffer[i] == '\r' || buffer[i] == '\n')
-        write(STDOUT_FILENO, '\r\n', 2 * sizeof(char));
+      {
+        write(STDOUT_FILENO, '\r', sizeof(char));
+        write(STDOUT_FILENO, '\n', sizeof(char));
+      }
       else
         write(STDOUT_FILENO, buffer[i], sizeof(char));
       i++;
@@ -63,7 +70,7 @@ void shell_IO(int fd1, int fd2)
 
   if (pollReturn < 0)
   {
-    fprinf(stderr, "Return Error\n");
+    fprintf(stderr, "Return Error\n");
     exit(1);
   }
   if ((pollfds[0].revents /*POLLIN*/))
@@ -76,7 +83,8 @@ void shell_IO(int fd1, int fd2)
       {
         if (buffer[i] == '\r' || buffer[i] == '\n')
         {
-          write(fd2, '\r\n', 2 * sizeof(char));
+          write(fd2, '\r', sizeof(char));
+          write(fd2, '\n', sizeof(char));
           write(fd1_global[1], '\n', sizeof(char));
         }
         else if (buffer[i] == '\4')
@@ -85,8 +93,8 @@ void shell_IO(int fd1, int fd2)
           kill(pid, SIGINT);
         else
         {
-          write(fd2, buffer[i], sizeof(char));
-          write(fd1_global[1], &buffer, sizeof(char));
+          write(fd2, &buffer[i], sizeof(char));
+          write(fd1_global[1], buffer, sizeof(char));
         }
         i++;
       }
@@ -101,7 +109,7 @@ void shell_IO(int fd1, int fd2)
   }
 }
 
-void runChildShell()
+void childShell()
 {
   //close pipes we dont need right now
   close(fd1_global[1]);
@@ -117,7 +125,7 @@ void runChildShell()
   char *args[2] = {path, NULL};
   if (execvp(path, args) == -1)
   { //execute shell
-    fprintf(stderr, "error: %s", 1111111);
+    fprintf(stderr, "error: %s", strerror(errno));
     exit(1);
   }
 }
@@ -176,38 +184,39 @@ int main(int argc, char **argv)
     if (c == -1)
       break;
     else if (c == 's')
-      shellFlag == 1;
+      shellFlag = 1;
     else
       exit(99);
+  }
+  initializePipes(fd1_global, fd2_global);
 
-    initializePipes(fd1_global, fd2_global);
-
-    if (shellFlag)
+  if (shellFlag)
+  {
+    pid = fork(); // Create new process and store ID.
+    if (pid == 0)
+      childShell();
+    else if (pid > 0)
     {
-      pid = fork(); // Create new process and store ID.
-      if (pid == 0)
-        childShell();
-      else if (pid > 0)
-      {
-        close(fd1[0]);
-        close(fd2[1]);
-        shell_IO(0, 1);
-      }
-      else
-      {
-        // fprintf(stderr, "error: %s", strerror(errno));
-        // exit(1);
-      }
+      close(fd1_global[0]);
+      close(fd2_global[1]);
+      shell_IO(0, 1);
     }
-    noShell_IO();
-    return 0;
+    else
+    {
+      // fprintf(stderr, "error: %s", strerror(errno));
+      // exit(1);
+    }
+  }
+  noShell_IO();
 
-    // Set up read, be able to read constantly, create a buffer that allows more than one character at a time, should not wait for new line.
+  // Set up read, be able to read constantly, create a buffer that allows more than one character at a time, should not wait for new line.
 
-    /*
+  /*
   Create terminal struct.
   Get current terminal state and save it.
   Make changes to that struct and copy it to a new one, using option tcsanow
   Make sure it's configured first. 
   */
-  }
+
+  exit(0);
+}
