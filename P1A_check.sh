@@ -261,7 +261,6 @@ echo "... confirming character at a time echo"
 	CLOSE
 EOF
 RC=$?
-echo "Test 264"
 if [ $RC -ne 0 ]
 then
 	echo "FAIL ... STDERR dump follows:"
@@ -291,7 +290,7 @@ echo "... confirming cr->crlf translation"
 	SEND "abc\r"
 	WAIT 1
 
-	SEND "^D"
+	SEND "^D" 	
 	CLOSE
 EOF
 RC=$?

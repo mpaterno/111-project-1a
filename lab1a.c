@@ -1,3 +1,7 @@
+// NAME: MATTHEW PATERNO
+// EMAIL: MPATERNO@G.UCLA.EDU
+// ID: 904756085
+
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -15,10 +19,11 @@ int shellFlag;
 int pipeToChild[2];
 int pipeToParent[2];
 char *shellProgram = NULL;
+char crlf[2] = {'\r', '\n'};
 pid_t pid;
 extern int errno;
 
-void noShell_IO()
+void defaultio()
 {
   char buffer[256];
   int readSize = read(STDIN_FILENO, buffer, sizeof(char) * 256);
@@ -27,26 +32,21 @@ void noShell_IO()
     int i = 0;
     while (i < readSize)
     {
-      if (buffer[i] == '\r' || buffer[i] == '\n')
-      {
-        write(STDOUT_FILENO, '\r', sizeof(char));
-        write(STDOUT_FILENO, '\n', sizeof(char));
-        printf('Line 33\n');
-      }
-      else if (buffer[i] == '\4')
-      {
+      char current = buffer[i];
+      if (current == '\r' || current == '\n')
+        write(STDOUT_FILENO, crlf, 2 * sizeof(char));
+      else if (current == '\4')
         exit(0);
-        printf('Line 38\n');
-      }
       else
-      {
-        write(STDOUT_FILENO, buffer[i], sizeof(char));
-        printf('Line 42\n');
-      }
+        write(STDOUT_FILENO, &buffer[i], sizeof(char));
       i++;
     }
-    // May not need memset
     readSize = read(STDIN_FILENO, buffer, sizeof(char) * 256);
+  }
+  if (readSize < 0)
+  {
+    fprintf(stderr, "ERROR: Bad non-shell read, error number: %s\n ", strerror(errno));
+    exit(1);
   }
 }
 
@@ -54,93 +54,132 @@ void initializePipes(int fd1[2], int fd2[2])
 {
   if (pipe(fd1) == -1)
   {
-    fprintf(stderr, "Pipe creation error.");
-    printf('Line 56\n');
+    fprintf(stderr, "ERROR: Bad pipe creation for fd1, error number: %s\n ", strerror(errno));
     exit(1);
   }
   if (pipe(fd2) == -1)
   {
-    fprintf(stderr, "Pipe creation error.");
-    printf('Line 62\n');
+    fprintf(stderr, "ERROR: Bad pipe creation for fd2, error number: %s\n ", strerror(errno));
     exit(1);
   }
 }
 
-void shell_IO(int fd1, int fd2)
+struct pollfd pollfds[2];
+void configurePollfd()
 {
-  // poll_IO describing stdin
-  struct pollfd pollfds[2];
-  pollfds[0].fd = fd1;
+  pollfds[0].fd = STDIN_FILENO;
+  pollfds[0].events = POLLIN;
   pollfds[1].fd = pipeToParent[0];
-  // Both pollfds waiting for either input (POLLIN) or error (POLLHUP, POLLERR) events.
-  pollfds[0].events = POLLIN | POLLHUP | POLLERR;
   pollfds[1].events = POLLIN | POLLHUP | POLLERR;
+}
 
-  char buffer[256];
-  char current;
-  int pollReturn = poll(pollfds, 2, 0);
+void shellio() // Sending 0 and 1
+{
+  close(pipeToChild[0]);  // Close Read End
+  close(pipeToParent[1]); // Close Write End
+  configurePollfd();
 
-  if (pollReturn < 0)
+  while (1)
   {
-    fprintf(stderr, "Return Error\n");
-    printf('Line 84\n');
-    exit(1);
-  }
-  if ((pollfds[0].revents & POLLIN))
-  {
-    int readSize = read(fd1, buffer, sizeof(char) * 256);
-    while (readSize)
+    char buffer[256];
+    int pollReturn = poll(pollfds, 2, 0);
+
+    if (pollReturn < 0)
     {
-      int i = 0;
-      while (i < readSize)
-      {
-        if (buffer[i] == '\r' || buffer[i] == '\n')
-        {
-          write(fd2, '\r', sizeof(char));
-          write(fd2, '\n', sizeof(char));
-          write(pipeToChild[1], '\n', sizeof(char));
-        }
-        else if (buffer[i] == '\4')
-          close(pipeToChild[1]);
-        else if (buffer[i] == '\3')
-          kill(pid, SIGINT);
-        else
-        {
-          write(fd2, buffer[i], sizeof(char));
-          write(pipeToChild[1], buffer, sizeof(char));
-        }
-        i++;
-      }
-      // May not need memset
-      readSize = read(STDIN_FILENO, buffer, sizeof(char) * 256);
+      fprintf(stderr, "ERROR: Bad poll creation, error number: %s\n ", strerror(errno));
+      exit(1);
     }
-  }
-  // Review below
-  if ((POLLERR | POLLHUP) & (pollfds[1].revents))
-  {
-    exit(0);
+    else
+    {
+      if (pollfds[0].revents & POLLIN)
+      {
+        // Pipe input from keyboard to shell.
+        int readSize = read(STDIN_FILENO, buffer, sizeof(char) * 256);
+        if (readSize < 0)
+        {
+          fprintf(stderr, "ERROR: Bad from STDIN, error number: %s\n ", strerror(errno));
+          exit(1);
+        }
+
+        int i = 0;
+        while (i < readSize)
+        {
+          char current = buffer[i];
+          if (current == '\r' || current == '\n')
+          {
+            char n = '\n';
+            if (write(STDOUT_FILENO, crlf, 2 * sizeof(char)) < 0)
+              fprintf(stderr, "ERROR: Bad write to STDOUT, error number: %s\n ", strerror(errno));
+            write(pipeToChild[1], &n, sizeof(char));
+          }
+          else if (current == '\4')
+            close(pipeToChild[1]);
+          else if (current == '\3')
+            kill(pid, SIGINT);
+          else
+          {
+            write(STDOUT_FILENO, &buffer[i], sizeof(char));
+            write(pipeToChild[1], &buffer[i], sizeof(char));
+          }
+          i++;
+        }
+        if (readSize < 0)
+        {
+          fprintf(stderr, "ERROR: Unable to Read, error number: %s\n ", strerror(errno));
+          exit(1);
+        }
+      }
+      else if (pollfds[1].revents & POLLIN)
+      {
+        // Read From Shell
+        int readSize = read(pipeToParent[0], buffer, sizeof(char) * 256);
+        int i = 0;
+        if (readSize < 0)
+        {
+          fprintf(stderr, "ERROR: Bad read from shell, error number: %s\n ", strerror(errno));
+          exit(1);
+        }
+        while (i < readSize)
+        {
+          char current = buffer[i];
+          if (current == '\n' || current == '\r')
+            write(STDOUT_FILENO, crlf, 2 * sizeof(char));
+          else
+            write(STDOUT_FILENO, &buffer[i], sizeof(char));
+          i++;
+        }
+      }
+      else if (pollfds[1].revents & (POLLHUP | POLLERR))
+      {
+        exit(0);
+        fprintf(stderr, "ERROR: Poll error, error number: %s\n ", strerror(errno));
+      }
+    }
   }
 }
 
 void shellProcess()
 {
-  //copy fd's we need to 0 and 1
+  // Close Other Read and Write Ends
+  close(pipeToChild[1]);
+  close(pipeToParent[0]);
+  // Reassign file descriptors.
   dup2(pipeToChild[0], 0);
   dup2(pipeToParent[1], 1);
-  //close original versions
+  // Close non-copies.
   close(pipeToChild[0]);
   close(pipeToParent[1]);
 
-  char path[] = "/bin/bash";
-  char *args[2] = {path, NULL};
+  char *args[2] = {shellProgram, NULL};
   if (execvp(shellProgram, args) == -1)
   { //execute shell
-    fprintf(stderr, "error: %s", strerror(errno));
+    fprintf(stderr, "ERROR: Bad shell execution, error number: %s\n ", strerror(errno));
     exit(1);
   }
 }
 
-void restore()
+// Function runs at exit.
+void restoreTerminal()
 {
   tcsetattr(STDIN_FILENO, TCSANOW, &defaultTermState);
   if (shellFlag)
@@ -148,34 +187,43 @@ void restore()
     int status;
     if (waitpid(pid, &status, 0) == -1)
     {
-      fprintf(stderr, "error on waitpid");
+      fprintf(stderr, "ERROR: Waitpid, error number: %s\n ", strerror(errno));
       exit(1);
     }
     if (WIFEXITED(status))
     {
-      const int es = WEXITSTATUS(status);
-      const int ss = WTERMSIG(status);
-      fprintf(stderr, "SHELL EXIT SIGNAL=%d STATUS=%d\n", ss, es);
+      const int exitStatus = WEXITSTATUS(status);
+      const int termSig = WTERMSIG(status);
+      fprintf(stderr, "SHELL EXIT SIGNAL=%d STATUS=%d\n", termSig, exitStatus);
       exit(0);
     }
   }
 }
 
-int main(int argc, char **argv)
+void setTerminal()
 {
-  atexit(restore);
   // Store Terminal Attributes to defaultTermState
   tcgetattr(STDIN_FILENO, &defaultTermState);
-
   // Save for restoration
   tcsetattr(STDIN_FILENO, TCSANOW, &defaultTermState); // Sets new parameters immediately.
   tcgetattr(STDIN_FILENO, &newTermState);
-  // Catch error after this step.
+
   // Set New Attributes
   newTermState.c_iflag = ISTRIP; /* only lower 7 bits	*/
   newTermState.c_oflag = 0;      /* no processing	*/
   newTermState.c_lflag = 0;      /* no processing	*/
 
+  if (tcsetattr(0, TCSANOW, &newTermState) < 0)
+  {
+    fprintf(stderr, "ERROR: Unable to set terminal attributes, error number: %s\n ", strerror(errno));
+    exit(1);
+  }
+}
+
+int main(int argc, char **argv)
+{
+  setTerminal();
+  atexit(restoreTerminal);
   shellFlag = 0;
 
   static struct option long_options[] =
@@ -196,42 +244,30 @@ int main(int argc, char **argv)
     {
       shellFlag = 1;
       if (optarg != NULL)
-      {
         shellProgram = optarg;
-      }
     }
     else
-      exit(99);
+    {
+      fprintf(stderr, "ERROR: Unrecognized arguments, error number: %s\n ", strerror(errno));
+      exit(1);
+    }
   }
   initializePipes(pipeToChild, pipeToParent);
 
   if (shellFlag)
   {
     pid = fork(); // Create new process and store ID.
-    if (pid == 0)
+    if (pid == 0) // Child Process
       shellProcess();
-    else if (pid > 0)
-    {
-      close(pipeToChild[0]);
-      close(pipeToParent[1]);
-      shell_IO(0, 1);
-    }
+    else if (pid > 0) // Parent Process
+      shellio();
     else
     {
       fprintf(stderr, "error: %s", strerror(errno));
       exit(1);
     }
   }
-  noShell_IO();
-
-  // Set up read, be able to read constantly, create a buffer that allows more than one character at a time, should not wait for new line.
-
-  /*
-  Create terminal struct.
-  Get current terminal state and save it.
-  Make changes to that struct and copy it to a new one, using option tcsanow
-  Make sure it's configured first. 
-  */
-
+  else
+    defaultio();
   exit(0);
 }

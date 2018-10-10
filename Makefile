@@ -7,5 +7,8 @@
 default:
 	gcc -g -Wall -Wextra -o lab1a lab1a.c
 
+clean: 
+	rm -f lab1a *.o *.txt *.tar.gz
+
 dist:
 	tar -czvf lab1a-904756085.tar.gz Makefile README lab1a.c

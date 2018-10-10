@@ -1,1 +1,27 @@
-This is the README.
+# NAME: MATTHEW PATERNO
+# EMAIL: MPATERNO@G.UCLA.EDU
+# ID: 904756085
+
+lab1a.c:
+Default program reconfigures the terminal into character-at-a-time, no-echo 
+mode (also known as non-canonical input mode with no echo). It then takes input
+from STDIN and copies it to STDOUT. Particular keystrokes like \n and \r are
+handled to write <cr><lr>.
+When using the --shell option, lab1a.c takes advantage of pollfd to manage child
+and parent processes and runs a shell specified by --shell's argument as as child
+process. STDIN is then piped to the shell and written back to the parent to be
+outputted as STDOUT. 
+
+Makefile:
+A Makefile that produces a tarzip of containing a Makefile, README, and lab1a.c.
+
+Some challenges I faced was understanding the piping API and what ends were facing
+the parent and the child. Most of my debugging efforts were spent going step by step
+through each data pipe and confirming data was being received by the terminal/shell.
+I spent plenty of time learning the poll(2) API, especially determining what the file
+descriptors were being assigned too. To overcome this, I tried breaking my code up
+into functional modules as much as possible.
+
+Some resources I used:
+https://linux.die.net/man/3/poll
+https://www.geeksforgeeks.org/c-program-demonstrate-fork-and-pipe/
